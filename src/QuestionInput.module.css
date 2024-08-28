@@ -1,0 +1,16 @@
+.QuestionInput {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 24px 0;
+
+    .textField {
+        flex: 1;
+    }
+
+    .sendIconButton {
+        position: absolute;
+        left: 100%;
+        transform: translateX(-110%);
+    }
+}
