@@ -127,9 +127,11 @@ def rephrase_question_with_chat_history(question: str, chat_history: Dict[str, D
             Focus on the core intent of the question and ignore previous answers unless directly relevant to understanding the question.
             """)
     ]
-    for entry in chat_history.values():
-        messages.append(HumanMessage(content=entry['user']))
-        messages.append(AIMessage(content=entry['assistant']))
+    for key, value in chat_history.items():
+        if key == 'user':
+            messages.append(HumanMessage(content=value))
+        if key == 'assistant':  
+            messages.append(AIMessage(content=value))
     
     # Add the current question as the final message
     messages.append(HumanMessage(content=question))
