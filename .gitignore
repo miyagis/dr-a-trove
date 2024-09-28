@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 
+*.csv
+
 venv
 
 # Editor directories and files

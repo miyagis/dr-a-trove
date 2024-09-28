@@ -30,7 +30,7 @@ def logging_setup():
     return logger
 
 def set_env_variables():
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
     os.environ["LANGCHAIN_API_KEY"] = get_langchain_api_key()
     os.environ["OPENAI_API_KEY"] = get_chatGPT_api_key()
     os.environ["GOOGLE_CSE_ID"] = get_google_cse_id()

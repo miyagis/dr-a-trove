@@ -39,3 +39,21 @@
 .read-the-docs {
 	color: #888;
 }
+
+.chat-container {
+	background-color: #463020; /* Dark brown */
+	color: #f5f5f0; /* Off-white */
+  }
+  
+  .chat-bubble {
+	border-radius: 10px;
+	padding: 10px;
+  }
+  
+  .chat-bubble--sender {
+	background-color: #6b4626; /* Slightly darker brown */
+  }
+  
+  .chat-bubble--recipient {
+	background-color: #806040; /* Slightly lighter brown */
+  }

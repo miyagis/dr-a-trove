@@ -6,22 +6,23 @@ from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, H
 from langchain.schema import Document, SystemMessage, HumanMessage, AIMessage
 from langchain_community.tools.tavily_search import TavilySearchResults
 from typing import List
-from config import set_env_variables, logging_setup
+# from config import set_env_variables, logging_setup
+from backend import config
 from typing import List, Dict
 
-import untappd
+# import untappd
 
 import sys
 from inspect import getmembers, isfunction, getdoc
 
 chat_history = {}
-logger = logging_setup()
-set_env_variables()
+logger = config.logging_setup()
+config.set_env_variables()
 web_search_tool = TavilySearchResults(max_results=2)
 
 # TODO: Return answer{"to_user": "", "sources": ["source1": "", "source2": ""]}
-# TODO
-# TODO
+# TODO: test w/ function that return x rephrased questions for RAG improvement
+# TODO: if multiple RAGs then map snippets before grading them
 # TODO
 
 # chat_history = {
@@ -48,17 +49,6 @@ llm = ChatOpenAI(
 )
 
 def translate(question):
-    # prompt = ChatPromptTemplate.from_messages([
-    #     SystemMessagePromptTemplate.from_template("You are a language and websearch expert."),
-    #     HumanMessagePromptTemplate.from_template("""
-    #     Which languages (max 2) could this question be translated in to get better websearch results:
-    #     Question: {question}
-    #     Provide a JSON with zero or more keys of the language in string and the translation as the value. 
-    #                                              No premable or explanation. For example:
-    #                                              {example}
-
-    #     """)
-    # ])
     prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template("You are a language and websearch expert."),
         HumanMessagePromptTemplate.from_template("""
@@ -113,14 +103,6 @@ def web_search(question, rephrased_questions_translated):
     return documents
 
 def rephrase_question_with_chat_history(question: str, chat_history: Dict[str, Dict[str, str]]) -> str:
-    # Construct the conversation history as messages
-    # messages = [
-    #     SystemMessage(content="""
-    #         You are a question re-writer that converts an input question to a better version optimized for vectorstore retrieval.
-    #         Your goal is to focus on the current question and ensure that it is clear, concise, and semantically rich for retrieval, without altering its original intent.
-    #         The chat history is provided only for minimal context and should not overly influence the rephrasing.
-    #         """)
-    # ]
     messages = [
         SystemMessage(content="""
             You are a question re-writer that converts an input question to a better version optimized for vectorstore retrieval.
@@ -163,6 +145,7 @@ def grade_documents(documents: List[Document], question: str) -> List[Document]:
     
     graded_documents = []
     for doc in documents:
+        # print(type(doc))
         grade = chain.invoke({"question": question, "document": doc.page_content})
         if "source" in doc.metadata:
             logger.info(f"grade: {grade}; source: {doc.metadata['source']}; doc.page_content: {doc.page_content}")
@@ -171,9 +154,11 @@ def grade_documents(documents: List[Document], question: str) -> List[Document]:
         else:
             logger.error("Unknown document structure")
 
-        if int(grade['score']) > 5:
-            graded_documents.append(doc)
-        # else:
+        graded_documents.append((doc, grade))
+
+        # if int(grade['score']) > 5:
+        #     graded_documents.append(doc)
+        # # else:
         #     logger.info(f"doc.page_content: low score: {doc.page_content}")
     
     return graded_documents
@@ -195,19 +180,20 @@ def generate_answer(documents: List[Document], question: str, chat_history: Dict
         """)
     ])
     chain = prompt | llm
-    documents_content = " ".join([doc.page_content for doc in documents]) # TODO this is just combining all sources so we don't know what source exactly was used
+    documents_content = " ".join([doc.page_content for doc, score_dict in documents])
     answer = chain.invoke({"question": question, "documents": documents_content, "history_str": history_str, "max_response_size": max_response_size_in_sentences})
     answer= answer.content.strip()
 
     complete_answer = {
         "answer": answer,
-        "sources": {}
+        "sources": {},
+        "grade": -1
     }
     for document in documents:
-        if "source" in document.metadata:
-            complete_answer["sources"][document.metadata['source']] = document.page_content
-        elif "url" in document.metadata:
-            complete_answer["sources"][document.metadata['url']] = document.page_content
+        if "source" in document[0].metadata:
+            complete_answer["sources"][document[0].metadata['source']] = document[0].page_content
+        elif "url" in document[0].metadata:
+            complete_answer["sources"][document[0].metadata['url']] = document[0].page_content
         else:
             logger.error("Unknown document structure")
 
@@ -287,50 +273,77 @@ def tool_web_search(rephrased_question):
     web_results = web_search(rephrased_question, rephrased_questions_translated)
     return web_results
 
-def tool_get_local_beer(location):
-    """
-    This function searches the specialized websites for top breweries and beers to provide drinking suggestions.
-    """
-    breweries_response = untappd.get_breweries(search_query=location, search_type="brewery", search_sort="distance")
-    beers = []
-    return beers
+# def tool_get_local_beer(location):
+#     """
+#     This function searches the specialized websites for top breweries and beers to provide drinking suggestions.
+#     """
+#     breweries_response = "" # Google: breweries in city X site:ratebeer.com
+#     beers = []
+#     return beers
 
 
-def front_end_integration(question: str, chat_history: dict):
+def front_end_integration(question: str, chat_history: dict, question_style: str = "combination"):
     logger.info(f"Input: {question}")
+    min_doc_grade = 6
     max_response_size_in_sentences = 3
     functions = get_current_module_functions()
     tool_functions = {key: value for key, value in functions.items() if key.startswith("tool")}
 
-    if len(chat_history) > 0:
-        rephrased_question = rephrase_question_with_chat_history(question, chat_history)
-    else:
-        rephrased_question = question
+    question_versions = {"original": question}
+    if question_style in ["rephrased", "combination"]: #len(chat_history) > 0:
+        question_versions['rephrased'] = rephrase_question_with_chat_history(question, chat_history)
     
     counter = 0
     answer_grade = -1
-    task_description = f"Respond to this user input: {rephrased_question}"
+    task_description = f"Respond to this user input: {question_versions['original']}"
     selection_of_tools = determine_tool_order(tool_functions, task_description)
-    while answer_grade <= 5 or counter >=3:
+    selection_of_tools = ['tool_retrieve_book_knowledge']
+    while answer_grade <= 5 and counter < 3:
         documents_to_answer_question = []
         for selected_tool in selection_of_tools: 
             if selected_tool == 'tool_web_search':
                 print("dr. A. Trove: Searching the web...")
-                web_documents = tool_web_search(rephrased_question)
-                web_documents_graded = grade_documents(web_documents, rephrased_question)
+                web_documents = []
+                if question_style == "combination":
+                    for question_version in question_versions.values():
+                        web_documents.extend(tool_web_search(question_version))
+                else:
+                    web_documents.extend(tool_web_search(question_versions[question_style]))
+                
+                web_documents_graded = grade_documents(web_documents, question_versions["original"])
                 # TODO get more info from the website
                 documents_to_answer_question.extend(web_documents_graded)
             elif selected_tool == 'tool_retrieve_book_knowledge':
-                curated_documents = tool_retrieve_book_knowledge(rephrased_question)
-                curated_documents_graded = grade_documents(curated_documents, rephrased_question)
+                curated_documents = []
+
+                if question_style == "combination":
+                    for question_version in question_versions.values():
+                        curated_documents.extend(tool_retrieve_book_knowledge(question_version))
+                else:
+                    curated_documents.extend(tool_retrieve_book_knowledge(question_versions[question_style]))
+
+                # Assuming 'documents' is your list of Document objects
+                unique_documents = []
+                seen_content = set()
+
+                # Iterate over the list of documents
+                for doc in curated_documents:
+                    if doc.page_content not in seen_content:
+                        unique_documents.append(doc)
+                        seen_content.add(doc.page_content)
+
+                curated_documents_graded = grade_documents(unique_documents, question_versions['original'])
                 documents_to_answer_question.extend(curated_documents_graded)
             else:
                 logger.error(f"Unknown tool selected: {selected_tool}")
 
-        answer = generate_answer(documents_to_answer_question, rephrased_question,chat_history, max_response_size_in_sentences)
+        quality_docs = [[doc, score_dict] for doc, score_dict in documents_to_answer_question if score_dict.get('score', 0) >= min_doc_grade]
+        answer = generate_answer(quality_docs, question_versions['original'], chat_history, max_response_size_in_sentences)
         if answer['answer'] != "I don't know.":
-            answer_grade = grade_answer(question, answer['answer'])
+            answer['grade'] = grade_answer(question_versions['original'], answer['answer'])
+            answer_grade = answer['grade']
         else:
+            answer['grade'] = 11
             answer_grade = 11
         counter+=1
 
@@ -347,5 +360,5 @@ def mini_main():
         chat_counter+=1
 
 if __name__ == '__main__':
-    tool_get_local_beer('Aalst')
+    # tool_get_local_beer('Aalst')
     mini_main()
